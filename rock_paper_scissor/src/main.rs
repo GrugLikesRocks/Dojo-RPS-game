@@ -40,7 +40,7 @@ impl Rect {
         let max = Vec2::new(self.position.x + self.size.x, self.position.y + self.size.y);
 
         if (point.x > min.x && max.x > point.x) && (point.y > min.y && max.y > point.y) {
-            println!("\n\n");
+            //println!("\n\n");
             true
         } else {
             false
@@ -298,8 +298,6 @@ fn player_choice_event(
 }
 
 
-
-
 fn player_initiated_event(
     mut event: EventReader<PlayerInitiatedEvent>,
 ) {
@@ -310,10 +308,8 @@ fn player_initiated_event(
 }
 
 
-
-
 fn player_choice(player_num: u8, choice: Choice) {
-    println!("Player {} chose {:?}", player_num, choice);
+    //println!("Player {} chose {:?}", player_num, choice);
 }
 
 
@@ -462,6 +458,36 @@ impl StartGameCommand {
 
 
 
+
+
+
+
+
+
+
+#[derive(Resource)]
+pub struct CheckGame(mpsc::Sender<()>);
+
+impl CheckGame {
+    pub fn try_send(&self)
+        // Result<T, E>: The Result type in Rust represents either a successful value of type T or an error of type E.
+        // this is not a touple
+     -> Result< (), mpsc::error::TrySendError<()> > {
+        // i think its like if it does fail it saves the error in e
+
+        self.0.try_send(())
+    }
+}
+
+//some sort of retunr value from dojo?
+pub struct UpdateCar {
+    pub vehicle: Vec<FieldElement>,// vector of field elements
+}
+
+
+
+
+
 // this should spawn the players
 fn start_game_dojo(
     env: Res<DojoEnv>,
@@ -539,7 +565,6 @@ fn start_game_dojo(
                     log::error!("Run spawn_player system: {e}");
                 }
             }
-            
         }
     });
 }
@@ -548,6 +573,61 @@ fn start_game_dojo(
 
 
 
+// // this is apparently a startup system so only called once but it has an indefinite loop in the middle, thats where the update happens
+// fn update_vehicle_thread(
+//     env: Res<DojoEnv>,
+//     runtime: ResMut<TokioTasksRuntime>,
+//     mut commands: Commands,
+// ) {
+
+//     let (tx, mut rx) = mpsc::channel::<()>(16);
+
+//     commands.insert_resource(CheckGame(tx));
+
+//     let account = env.account.clone();
+//     let world_address = env.world_address;
+//     let block_id = env.block_id;
+
+//     runtime.spawn_background_task(move |mut ctx| async move {
+
+//         let world = WorldContract::new(world_address, account.as_ref());
+
+//         //get the component/struct Player from the dojo world
+//         let player_component = world.component("Player", block_id).await.unwrap();
+
+//         //this is the loop that runs indefinetly
+//         while let Some(_) = rx.recv().await {
+           
+//             //let model_id = get_model_id(ctx.clone()).await;
+            
+
+          
+//                 match player_component
+//                     .entity(FieldElement::ZERO, vec![model_id], block_id)
+//                     .await
+//                 {   // the return data is then saved in the vehicle variable
+//                     Ok(vehicle) => 
+//                     {
+//                         ctx.run_on_main_thread(move |ctx| 
+//                         {   
+//                             let mut state: SystemState<EventWriter<UpdateCar>> = SystemState::new(ctx.world);
+
+//                             let mut update_car = state.get_mut(ctx.world);
+              
+//                             update_car.send(UpdateCar { vehicle })  
+
+//                         })
+//                         .await;
+//                     }
+
+//                     Err(e) => {
+//                         log::error!("Query `Vehicle` component: {e}");
+//                     }
+//                 }
+            
+//         }
+//     });
+// }
 
 
 
