@@ -2,13 +2,8 @@ use std::f32::consts::E;
 
 use bevy::input::mouse::MouseButtonInput;
 use bevy::input::ButtonState;
-use bevy::{
-    prelude::*,
-    sprite::Anchor,
-    text::{BreakLineOn, Text2dBounds},
-};
-use bevy::{prelude::*, sprite::MaterialMesh2dBundle};
-
+use bevy::prelude::*;
+use bevy::sprite::MaterialMesh2dBundle;
 use bevy::window::PrimaryWindow;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -59,6 +54,7 @@ pub struct Player {
     pub rects: Vec<Rect>,
     pub player_num: u8,
     pub text_entity: Option<Entity>,
+    pub player_field : FieldElement,
 }
 
 pub struct TextChoiceEvent
@@ -67,11 +63,36 @@ pub struct TextChoiceEvent
     pub choice : Choice,
 }
 
+
+pub struct PlayerInitiatedEvent;
+
+
+
 fn main() {
+
+
+    let url = Url::parse(configs::JSON_RPC_ENDPOINT).unwrap();
+    let account_address = FieldElement::from_str(configs::ACCOUNT_ADDRESS).unwrap();
+    let account = SingleOwnerAccount::new(
+            JsonRpcClient::new(HttpTransport::new(url)),
+            LocalWallet::from_signing_key(SigningKey::from_secret_scalar(
+                FieldElement::from_str(configs::ACCOUNT_SECRET_KEY).unwrap(),
+            )),
+            account_address,
+            cairo_short_string_to_felt("KATANA").unwrap(),
+    );
+
+    let world_address = FieldElement::from_str(configs::WORLD_ADDRESS).unwrap();
+
+
     App::new()
-        .add_plugins((DefaultPlugins))
+        .add_plugins(DefaultPlugins)
         .add_event::<TextChoiceEvent>()
+        .add_event::<PlayerInitiatedEvent>()
+        .add_plugin(TokioTasksPlugin::default())
+        .insert_resource(DojoEnv::new(world_address, account))
         .add_startup_system(setup)
+        .add_startup_system(start_game_dojo)
         .add_system(spawn_rects_per_player)
         .add_system(mouse_click_system)
         .add_system(player_choice_event)
@@ -79,10 +100,7 @@ fn main() {
 }
 
 fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    asset_server: Res<AssetServer>,
+    mut commands: Commands
 ) {
     commands.spawn(Camera2dBundle::default());
 
@@ -93,6 +111,7 @@ fn setup(
         rects: Vec::new(),
         player_num: 1,
         text_entity: None,
+        player_field: (1 as u8).into()  // this is retarded
     });
 
     commands.spawn(Player {
@@ -100,6 +119,7 @@ fn setup(
         rects: Vec::new(),
         player_num: 2,
         text_entity: None,
+        player_field: (2 as u8).into(),
     });
 
 }
@@ -266,8 +286,6 @@ fn player_choice_event(
         for mut player in players_query.iter_mut() {
             if player.player_num == event.player_id {
                 player.choice = event.choice;
-                print!("Player {} chose dddddd{:?}", player.player_num, player.choice);
-                
 
                 if let Some(text_entity) = player.text_entity {
                     if let Ok(mut text) = texts.get_mut(text_entity) {
@@ -280,6 +298,265 @@ fn player_choice_event(
 }
 
 
+
+
+fn player_initiated_event(
+    mut event: EventReader<PlayerInitiatedEvent>,
+) {
+
+    for e in event.iter() {
+        println!("Player initiated event")
+    }
+}
+
+
+
+
 fn player_choice(player_num: u8, choice: Choice) {
     println!("Player {} chose {:?}", player_num, choice);
+}
+
+
+///////////////////////////////////////////////////
+//////////////////// CAIRO SECTION ///////////////////////
+//////////////////////////////////////////////////
+
+
+use rock_paper_scissor::configs;
+
+use bevy::ecs::system::SystemState;
+use bevy::log;
+use bevy::prelude::*;
+use bevy_rapier2d::prelude::*;
+use bevy_tokio_tasks::TaskContext;
+use bevy_tokio_tasks::{TokioTasksPlugin, TokioTasksRuntime};
+use dojo_client::contract::world::WorldContract;
+use num::bigint::BigUint;
+use num::{FromPrimitive, ToPrimitive};
+use rand::Rng;
+use starknet::accounts::SingleOwnerAccount;
+use starknet::core::types::{BlockId, BlockTag, FieldElement};
+use starknet::core::utils::cairo_short_string_to_felt;
+use starknet::providers::jsonrpc::HttpTransport;
+use starknet::providers::JsonRpcClient;
+use starknet::signers::{LocalWallet, SigningKey};
+use std::ops::Div;
+use std::str::FromStr;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use url::Url;
+
+
+
+
+
+
+//all of dojo world stuff
+
+fn setup_dojo(mut commands: Commands) {
+    commands.spawn(DojoSyncTime::from_seconds(configs::DOJO_SYNC_INTERVAL));
+}
+
+
+#[derive(Component)]
+struct DojoSyncTime {
+    timer: Timer,
+}
+// this has somethign to do with an update ticker
+impl DojoSyncTime {
+    fn from_seconds(duration: f32) -> Self {
+        Self {
+            timer: Timer::from_seconds(duration, TimerMode::Repeating),
+        }
+    }
+}
+
+
+
+//this on the other hand is called eveyr update, by the looks of things this is to update the dt on the dojo side
+//but ofcourse to update you need a reference and i think its those resource 
+
+//for now commented out but should be the thing that checks when to win or lose
+// fn sync_dojo_state(
+//     mut dojo_sync_time: Query<&mut DojoSyncTime>,
+//     time: Res<Time>,
+//     spawn_racers: Res<StartGameCommand>,   //
+// ) {
+//     let mut dojo_time = dojo_sync_time.single_mut();
+//     // This retrieves a mutable reference to the DojoSyncTime component or resource from the ECS world.
+//     // this is a bevy thing
+
+
+//     if dojo_time.timer.just_finished() {
+//         dojo_time.timer.reset();
+//         //If the timer inside dojo_time has just finished its countdown, it's being reset.
+//         if cars.is_empty() {// if there are no then spawn some
+//             if let Err(e) = spawn_racers.try_send() {
+//                 log::error!("Spawn racers channel: {e}");
+//             }
+//         } else { //else tick
+//             if let Err(e) = update_vehicle.try_send() {
+//                 log::error!("Update vehicle channel: {e}");
+//             }
+//             if let Err(e) = drive.try_send() {
+//                 log::error!("Drive channel: {e}");
+//             }
+//             if let Err(e) = update_enemies.try_send() {
+//                 log::error!("Update enemies channel: {e}");
+//             }
+
+//             //tries to sent the message to the channel
+
+//         }
+//     } else {
+//         dojo_time.timer.tick(time.delta());
+//         //else make it tick
+//     }
+// }
+
+
+
+
+// derive is a macro that automatically implements some traits for a struct basically an interface in c++
+#[derive(Resource)]
+pub struct DojoEnv {
+    /// The block ID to use for all contract calls.
+    block_id: BlockId,
+    /// The address of the world contract.
+    world_address: FieldElement,
+    /// The account to use for performing execution on the World contract.
+    account: Arc<SingleOwnerAccount<JsonRpcClient<HttpTransport>, LocalWallet>>,
+}
+
+// impl is a keyword that implements functions for a struct
+impl DojoEnv {
+    fn new(
+        world_address: FieldElement,
+        account: SingleOwnerAccount<JsonRpcClient<HttpTransport>, LocalWallet>,
+    ) -> Self {
+        Self {
+            world_address,
+            account: Arc::new(account),
+            block_id: BlockId::Tag(BlockTag::Latest),
+        }
+    }
+}
+
+
+
+
+#[derive(Resource)]
+pub struct StartGameCommand(mpsc::Sender<()>);
+
+impl StartGameCommand {
+    pub fn try_send(&self)
+        // Result<T, E>: The Result type in Rust represents either a successful value of type T or an error of type E.
+        // this is not a touple
+     -> Result< (), mpsc::error::TrySendError<()> > {
+        // i think its like if it does fail it saves the error in e
+
+        self.0.try_send(())
+    }
+}
+
+
+
+
+// this should spawn the players
+fn start_game_dojo(
+    env: Res<DojoEnv>,
+    runtime: ResMut<TokioTasksRuntime>,
+    mut commands: Commands,
+) {
+   
+    let (tx, mut rx) = mpsc::channel::<()>(8);
+
+    commands.insert_resource(StartGameCommand(tx));
+ 
+    let account = env.account.clone();
+    let world_address = env.world_address;
+    let block_id = env.block_id;
+
+    runtime.spawn_background_task(move |mut ctx| async move {
+
+        let world = WorldContract::new(world_address, account.as_ref());
+
+        let start_game_system = world.system("start_game_dojo_side", block_id).await.unwrap();
+
+        let player_num_one = get_given_model_id(ctx.clone(), (1 as u8).into()).await.unwrap();
+
+        let player_num_two = get_given_model_id(ctx.clone(), (1 as u8).into()).await.unwrap();
+
+        while let Some(_) = rx.recv().await {
+
+            match start_game_system
+                .execute(vec![
+                    player_num_one,
+                ])
+                .await
+                //await is asyncrounous
+            {
+                Ok(_) => {
+                    ctx.run_on_main_thread(move |ctx| 
+                    {
+                      
+                        let mut state: SystemState<EventWriter<PlayerInitiatedEvent>> = SystemState::new(ctx.world);
+                              
+                        let mut spawn_player= state.get_mut(ctx.world);
+                         
+                        spawn_player.send(PlayerInitiatedEvent); 
+                        
+                    })
+                    .await;
+                    
+                }
+                Err(e) => {
+                    log::error!("Run spawn_player system: {e}");
+                }
+            }
+
+            match start_game_system
+                .execute(vec![
+                    player_num_two,
+                ])
+                .await
+                //await is asyncrounous
+            {
+                Ok(_) => {
+                    ctx.run_on_main_thread(move |ctx| 
+                    {
+                        let mut state: SystemState<EventWriter<PlayerInitiatedEvent>> = SystemState::new(ctx.world);
+                              
+                        let mut spawn_player= state.get_mut(ctx.world);
+                         
+                        spawn_player.send(PlayerInitiatedEvent); 
+                        
+                    })
+                    .await;
+                    
+                }
+                Err(e) => {
+                    log::error!("Run spawn_player system: {e}");
+                }
+            }
+            
+        }
+    });
+}
+
+
+
+
+
+
+
+
+
+
+async fn get_given_model_id(mut ctx: TaskContext, given_id: FieldElement) -> Option<FieldElement> {
+    ctx.run_on_main_thread(move |_ctx| {
+        
+        Some(given_id)
+    })
+    .await
 }
