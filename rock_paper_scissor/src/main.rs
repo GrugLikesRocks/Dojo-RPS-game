@@ -96,6 +96,7 @@ fn main() {
         .add_system(spawn_rects_per_player)
         .add_system(mouse_click_system)
         .add_system(player_choice_event)
+        .add_system(player_initiated_event)
         .run();
 }
 

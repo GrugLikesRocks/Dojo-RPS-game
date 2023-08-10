@@ -1,13 +1,13 @@
 [package]
-name = "drive_ai"
+name = "rps"
 version = "0.1.0"
-cairo-version = "2.1.0-rc4"
+cairo-version = "2.0.0-rc4"
 
 [cairo]
 sierra-replace-ids = true
 
 [dependencies]
-dojo = { git = "https://github.com/dojoengine/dojo" }
+dojo = { git = "https://github.com/broody/dojo.git",  rev = "4f9b90aa8ca22b6e1f60afd2611596f32459f1e1" }
 cubit = { git = "https://github.com/tarrencev/cubit" }
 orion = { git = "https://github.com/danilowhk/orion" }
 
