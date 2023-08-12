@@ -11,10 +11,10 @@ katana --seed 0 --block-time 1
 sozo build
 
 # Migrate the world, this will declare/deploy contracts to katana
-sozo migrate --name rps     if it throws problems just do it without the --name bit
+sozo migrate 
 
 # Start indexer, graphql endpoint at http://localhost:8080
-torii --manifest target/dev/manifest.json --world-address 0x26065106fa319c3981618e7567480a50132f23932226a51c219ffb8e47daa84
+torii --manifest target/dev/manifest.json --world-address 0x5b328933afdbbfd44901fd69a2764a254edbb6e992ae87cf958c70493f2d201
 
 # start game
 cargo run

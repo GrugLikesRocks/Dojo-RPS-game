@@ -32,6 +32,27 @@ impl PlayerSerdeLen of dojo::SerdeLen<Player> {
 }
 
 
+
+
+
+#[derive(Component, Serde, Drop, Copy)]
+struct Game {
+    winner: u8,
+}
+
+impl GameSerdeLen of dojo::SerdeLen<Game> {
+    #[inline(always)]
+    fn len() -> usize {
+        8
+    }
+}
+
+// 0 nothing yet
+// 1 player one wins
+// 2 player two wins
+// 3 tie
+
+
 // #[derive(Serde, Drop)]
 // enum Choice {
 //     Rock: (),     3
@@ -46,6 +67,9 @@ impl PlayerSerdeLen of dojo::SerdeLen<Player> {
 // player field value
 
 
+// THE SECOND ONE IS ABOUT THIS NONCE VALUE BEING WRONG 
+
+
 
 #[system]
 mod start_game_dojo_side {
@@ -54,21 +78,24 @@ mod start_game_dojo_side {
     use serde::Serde;
     use dojo::world::Context;
     use super::{Player}; //gettign the types from above
+    use super:: {Game};
+    use super:: {ONE, TWO};
+
 
     // this shoud be the starting point and where we spawn the player
-    fn execute(ctx: Context, player_index : felt252) {
+    fn execute(ctx: Context, player_index : felt252, address_for_game_bevy : felt252) {
         
-
-        // two sets, set! is what i think should be the thing that spawns or "sets" data in the world
-        // the arguments are     the rworld context     a key and a value    very similar to a normal dict
-        // the key in this case cna be the adress right?
-        // key being the address should point to the right player struct
-
-        let start_choice : felt252 = 0;
-
-        set !(ctx.world, player_index.into(), (Player { index: player_index, choice: start_choice }));
+        set !(ctx.world, address_for_game_bevy.into(), (Game { winner: 0 }));
+        set !(ctx.world, ONE.into(), (Player { index: ONE, choice: ONE }));
+        set !(ctx.world, TWO.into(), (Player { index: TWO, choice: TWO }));
     }
 }
+
+
+
+
+
+
 
 #[system]
 mod check_game_dojo_side{
@@ -78,58 +105,100 @@ mod check_game_dojo_side{
     use dojo::world::Context;
     use super::{Player}; //gettign the types from above
     use super:: {ONE, TWO};
+    use super:: {Game};
 
-    fn execute(ctx: Context) {
+    fn execute(ctx: Context, address_for_game_bevy : felt252) {
 
         let player_one = get !(ctx.world, ONE.into(), Player);   // get the data
         let player_two = get !(ctx.world, TWO.into(), Player);   
+
+        let current_state = get !(ctx.world, address_for_game_bevy.into(), Game);   // get the data
+
+
+        // assert(player_one.choice == , 'should be 1'); 
+        // assert(player_two.choice == 2, 'should be 2'); 
+
+        let mut game_winner: u8 = 0;
 
         if player_one.choice != 0 && player_two.choice != 0 {
             
             if player_one.choice == 3 && player_two.choice == 1 {
                 //player one wins
+                game_winner = 1;
             }
             else if player_one.choice == 3 && player_two.choice == 2 {
                 //player two wins
+                game_winner = 2;    
             }
             else if player_one.choice == 2 && player_two.choice == 3 {
                 //player one wins
+                game_winner = 1;
             }
             else if player_one.choice == 2 && player_two.choice == 1 {
                 //player two wins
+                game_winner = 2;
             }
             else if player_one.choice == 1 && player_two.choice == 2 {
                 //player one wins
+                game_winner = 1;
             }
             else if player_one.choice == 1 && player_two.choice == 3 {
                 //player two wins
+                game_winner = 2;
             }
             else {
                 //tie
+                game_winner = 3;
             }
         }
+
+
+        if current_state.winner != game_winner {
+            set !(ctx.world, address_for_game_bevy.into(), (Game { winner: game_winner }));
+        }
+        
     }
 }
 
+
+
+
+
+
 #[system]
-mod set_player_choice{
+mod update_player_choice{
     use array::ArrayTrait;
     use traits::Into;
     use serde::Serde;
     use dojo::world::Context;
     use super::{Player}; //gettign the types from above
-    use super:: {ONE, TWO};
                                                     // is there a way to send a type? like a enum or something?
-    fn execute(ctx: Context, player_index : felt252, choice_index : felt252) {
+    fn execute(ctx: Context, player_index_one : felt252, choice_index_one : felt252, player_index_two : felt252, choice_index_two : felt252 )
+    {
         
-        if choice_index == 1 {
-            set !(ctx.world, player_index.into(), (Player { index: player_index, choice: 3 }));
+        // assert(player_index_one == 1, 'should be 1'); 
+        // assert(player_index_two == 2, 'should be 2'); 
+
+        if choice_index_one == 1 {
+            set !(ctx.world, player_index_one.into(), (Player { index: player_index_one.into(), choice: 1 }));
         }
-        else if choice_index == 2 {
-            set !(ctx.world, player_index.into(), (Player { index: player_index, choice: 2 }));
+        else if choice_index_one == 2 {
+            set !(ctx.world, player_index_one.into(), (Player { index: player_index_one.into(), choice: 2 }));
         }
-        else if choice_index == 3 {
-            set !(ctx.world, player_index.into(), (Player { index: player_index, choice: 1 }));
+        else if choice_index_one == 3 {
+            set !(ctx.world, player_index_one.into(), (Player { index: player_index_one.into(), choice: 3 }));
         }
+
+
+        if choice_index_two == 1 {
+            set !(ctx.world, player_index_two.into(), (Player { index: player_index_two.into(), choice: 1 }));
+        }
+        else if choice_index_two == 2 {
+            set !(ctx.world, player_index_two.into(), (Player { index: player_index_two.into(), choice: 2 }));
+        }
+        else if choice_index_two == 3 {
+            set !(ctx.world, player_index_two.into(), (Player { index: player_index_two.into(), choice: 3 }));
+        }
+
     }
 }

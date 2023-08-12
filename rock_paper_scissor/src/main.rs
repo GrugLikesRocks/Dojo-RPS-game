@@ -1,9 +1,8 @@
-use std::f32::consts::E;
-
 use bevy::input::mouse::MouseButtonInput;
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::sprite::MaterialMesh2dBundle;
+use bevy::utils::tracing::field;
 use bevy::window::PrimaryWindow;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -16,6 +15,8 @@ pub enum Choice {
 #[derive(Component)]
 pub struct Game {
     pub started: bool,
+    pub dojo_game: bool,
+    pub current_game_state: u8,
 }
 
 #[derive(Debug)]
@@ -89,14 +90,26 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_event::<TextChoiceEvent>()
         .add_event::<PlayerInitiatedEvent>()
+        .add_event::<CheckGame>()
+        .add_event::<GameUpdate>()
+
         .add_plugin(TokioTasksPlugin::default())
+
         .insert_resource(DojoEnv::new(world_address, account))
+
         .add_startup_system(setup)
-        .add_startup_system(start_game_dojo)
-        .add_system(spawn_rects_per_player)
-        .add_system(mouse_click_system)
-        .add_system(player_choice_event)
-        .add_system(player_initiated_event)
+        .add_startup_system(setup_dojo.after(setup))
+        .add_startup_system(start_game_dojo.after(setup_dojo))
+        .add_startup_system(fetch_game_component.after(start_game_dojo))
+        .add_startup_system(update_choices_thread.after(fetch_game_component))
+        .add_startup_system(set_winner_state_thread.after(update_choices_thread))
+
+        .add_system(sync_dojo_state)
+        .add_system(spawn_rects_per_player.after(sync_dojo_state))
+        .add_system(mouse_click_system.after(sync_dojo_state))
+        .add_system(player_choice_event.after(sync_dojo_state))
+        .add_system(player_initiated_event.after(sync_dojo_state))
+        .add_system(check_game_update.after(sync_dojo_state))
         .run();
 }
 
@@ -105,7 +118,7 @@ fn setup(
 ) {
     commands.spawn(Camera2dBundle::default());
 
-    commands.spawn(Game { started: false });
+    commands.spawn(Game { started: false,dojo_game: false, current_game_state: 0 });
 
     commands.spawn(Player {
         choice: Choice::None,
@@ -345,7 +358,9 @@ use url::Url;
 
 
 
+const PLAYER_NUM_ONE: u8 = 1 ;
 
+const PLAYER_NUM_TWO: u8 = 2 ;
 
 
 //all of dojo world stuff
@@ -368,48 +383,59 @@ impl DojoSyncTime {
     }
 }
 
+// the issue is that the players are not techincally spawned in the real world
 
 
-//this on the other hand is called eveyr update, by the looks of things this is to update the dt on the dojo side
-//but ofcourse to update you need a reference and i think its those resource 
+fn sync_dojo_state(
+    mut dojo_sync_time: Query<&mut DojoSyncTime>,
+    mut game: Query<&mut Game>,
+    time: Res<Time>,
+    spawn_players: Res<StartGameCommand>,   //
+    check_game_component: Res<CheckGame>,
+    update_choice: Res<UpdateChoices>,
+    change_game_state: Res<UpdateGameWinnerState>
+) {
+    let mut dojo_time = dojo_sync_time.single_mut();
+ 
 
-//for now commented out but should be the thing that checks when to win or lose
-// fn sync_dojo_state(
-//     mut dojo_sync_time: Query<&mut DojoSyncTime>,
-//     time: Res<Time>,
-//     spawn_racers: Res<StartGameCommand>,   //
-// ) {
-//     let mut dojo_time = dojo_sync_time.single_mut();
-//     // This retrieves a mutable reference to the DojoSyncTime component or resource from the ECS world.
-//     // this is a bevy thing
+    let mut game_state = game.single_mut();
+    if dojo_time.timer.just_finished() {
+        dojo_time.timer.reset();
+        
+        if game_state.dojo_game == false {
+
+            println!("Game started");
+
+            if let Err(e) = spawn_players.try_send() {  // this one works fine
+                log::error!("Spawn players channel: {e}");
+            }
 
 
-//     if dojo_time.timer.just_finished() {
-//         dojo_time.timer.reset();
-//         //If the timer inside dojo_time has just finished its countdown, it's being reset.
-//         if cars.is_empty() {// if there are no then spawn some
-//             if let Err(e) = spawn_racers.try_send() {
-//                 log::error!("Spawn racers channel: {e}");
-//             }
-//         } else { //else tick
-//             if let Err(e) = update_vehicle.try_send() {
-//                 log::error!("Update vehicle channel: {e}");
-//             }
-//             if let Err(e) = drive.try_send() {
-//                 log::error!("Drive channel: {e}");
-//             }
-//             if let Err(e) = update_enemies.try_send() {
-//                 log::error!("Update enemies channel: {e}");
-//             }
+            game_state.dojo_game = true;
 
-//             //tries to sent the message to the channel
+        } else { 
+            if let Err(e) = check_game_component.try_send() {     // this one works fine
+                log::error!("updating the players: {e}");
+            }
 
-//         }
-//     } else {
-//         dojo_time.timer.tick(time.delta());
-//         //else make it tick
-//     }
-// }
+
+
+            if let Err(e) = update_choice.try_send() {
+                log::error!("updating the choice: {e}");
+            }
+
+
+
+            if let Err(e) = change_game_state.try_send() {   // thsi one also works fine
+                log::error!("updating the game state: {e}");
+            }
+
+
+        }   
+    } else {
+        dojo_time.timer.tick(time.delta()); 
+    }
+}
 
 
 
@@ -458,6 +484,138 @@ impl StartGameCommand {
 
 
 
+// these spawns the players at the start
+fn start_game_dojo(
+    env: Res<DojoEnv>,
+    runtime: ResMut<TokioTasksRuntime>,
+    mut commands: Commands,
+) {
+   
+    let (tx, mut rx) = mpsc::channel::<()>(8);
+
+    commands.insert_resource(StartGameCommand(tx));
+    
+    println!("start game dojo");
+
+    let account = env.account.clone();
+    let world_address = env.world_address;
+    let block_id = env.block_id;
+
+    runtime.spawn_background_task(move |mut ctx| async move {
+
+
+        let world = WorldContract::new(world_address, account.as_ref());
+
+        let start_game_system = world.system("start_game_dojo_side", block_id).await.unwrap();
+
+        while let Some(_) = rx.recv().await {
+            match start_game_system
+                .execute(vec![
+                    PLAYER_NUM_ONE.into(),
+                    into_field_element(10)
+                ])
+                .await
+                //await is asyncrounous
+            {
+                Ok(_) => {
+                    ctx.run_on_main_thread(move |ctx| 
+                    {
+                        let mut state: SystemState<EventWriter<PlayerInitiatedEvent>> = SystemState::new(ctx.world);
+                              
+                        let mut spawn_player= state.get_mut(ctx.world);
+                         
+                        spawn_player.send(PlayerInitiatedEvent); 
+                        
+                    })
+                    .await;
+                    
+                }
+                Err(e) => {
+                    log::error!("Run spawn_player system: {e}");
+                }
+            }
+
+        }
+
+        println!("start game dojo async after while loop");
+    });
+}
+
+
+
+
+
+
+
+
+
+
+#[derive(Resource)]
+pub struct UpdateChoices(mpsc::Sender<()>);
+
+impl UpdateChoices {
+    pub fn try_send(&self)
+        // Result<T, E>: The Result type in Rust represents either a successful value of type T or an error of type E.
+        // this is not a touple
+     -> Result< (), mpsc::error::TrySendError<()> > {
+        // i think its like if it does fail it saves the error in e
+
+        self.0.try_send(())
+    }
+}
+
+
+
+
+
+// this sends the new choices of the player
+fn update_choices_thread(
+    env: Res<DojoEnv>,
+    runtime: ResMut<TokioTasksRuntime>,
+    mut commands: Commands,
+
+) {
+    let (tx, mut rx) = mpsc::channel::<()>(8);
+
+    commands.insert_resource(UpdateChoices(tx));
+  
+    let account = env.account.clone();
+    let world_address = env.world_address;
+    let block_id = env.block_id;
+
+    runtime.spawn_background_task(move |mut ctx| async move {
+
+        let world = WorldContract::new(world_address, account.as_ref());
+
+        let update_choice_system = world.system("update_player_choice", block_id).await.unwrap();
+
+        while let Some(_) = rx.recv().await {
+
+            match update_choice_system
+                .execute(vec![
+                    into_field_element(1), 
+                    into_field_element(2),
+                    into_field_element(2),
+                    into_field_element(2),
+                ])
+                .await
+            {
+                Ok(_) => {
+                    ctx.run_on_main_thread(move |_ctx| 
+                    {
+                        println!("call sent fine");
+                    })
+                    .await;
+                }
+                Err(e) => {
+                    log::error!("Run update choice system: {e}");
+                }
+            }
+        }
+
+    });
+}
+
 
 
 
@@ -471,6 +629,107 @@ pub struct CheckGame(mpsc::Sender<()>);
 
 impl CheckGame {
     pub fn try_send(&self)
+     -> Result< (), mpsc::error::TrySendError<()> > {
+        self.0.try_send(())
+    }
+}
+
+
+
+//some sort of retunr value from dojo?
+pub struct GameUpdate {
+    pub game_update: Vec<FieldElement>,// vector of field elements
+}
+
+
+// this one whould work, this just fetches the game component to read who the winner is
+fn fetch_game_component(
+    env: Res<DojoEnv>,
+    runtime: ResMut<TokioTasksRuntime>,
+    mut commands: Commands,
+) {
+
+    let (tx, mut rx) = mpsc::channel::<()>(16);
+
+    commands.insert_resource(CheckGame(tx));
+
+    let account = env.account.clone();
+    let world_address = env.world_address;
+    let block_id = env.block_id;
+
+    // let player_num_one: FieldElement = PLAYER_NUM_ONE.into();
+    //let player_num_two: FieldElement = PLAYER_NUM_TWO.into();
+
+    runtime.spawn_background_task(move |mut ctx| async move {
+
+        let world = WorldContract::new(world_address, account.as_ref());
+
+        let player_component = world.component("Game", block_id).await.unwrap();
+
+        while let Some(_) = rx.recv().await {
+           
+                match player_component
+                    .entity(FieldElement::ZERO, vec![into_field_element(10)], block_id)
+                    .await
+                {   
+                    Ok(update) => 
+                    {
+                        ctx.run_on_main_thread(move |ctx| 
+                        {   
+                            let mut state: SystemState<EventWriter<GameUpdate>> = SystemState::new(ctx.world);
+                          
+                            let mut update_game: EventWriter<'_, GameUpdate> = state.get_mut(ctx.world);
+              
+                            update_game.send(GameUpdate { game_update: update })  
+
+                        })
+                        .await;
+                    }
+
+                    Err(e) => {
+                        log::error!("Query `Game` component: {e}");
+                    }
+                }
+        }
+    });
+}
+
+
+
+// this is the function that reads the event from above
+fn check_game_update(
+    mut events: EventReader<GameUpdate>,  //gets an event call
+    mut query: Query<&mut Game>,
+) {
+    for e in events.iter() { //loop through every event
+        if let Ok(mut state) = query.get_single_mut() 
+        {  
+            let onchain_game_state:u32 = field_element_to_u32(e.game_update[0]);
+
+            state.current_game_state = onchain_game_state as u8;
+
+            println!("onchain game state: {}", state.current_game_state)
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+#[derive(Resource)]
+pub struct UpdateGameWinnerState(mpsc::Sender<()>);
+
+impl UpdateGameWinnerState {
+    pub fn try_send(&self)
         // Result<T, E>: The Result type in Rust represents either a successful value of type T or an error of type E.
         // this is not a touple
      -> Result< (), mpsc::error::TrySendError<()> > {
@@ -480,26 +739,19 @@ impl CheckGame {
     }
 }
 
-//some sort of retunr value from dojo?
-pub struct UpdateCar {
-    pub vehicle: Vec<FieldElement>,// vector of field elements
-}
 
 
-
-
-
-// this should spawn the players
-fn start_game_dojo(
+// this runs the funciton to set the winner so the new game state
+fn set_winner_state_thread(
     env: Res<DojoEnv>,
     runtime: ResMut<TokioTasksRuntime>,
     mut commands: Commands,
+
 ) {
-   
     let (tx, mut rx) = mpsc::channel::<()>(8);
 
-    commands.insert_resource(StartGameCommand(tx));
- 
+    commands.insert_resource(UpdateGameWinnerState(tx));
+  
     let account = env.account.clone();
     let world_address = env.world_address;
     let block_id = env.block_id;
@@ -508,65 +760,30 @@ fn start_game_dojo(
 
         let world = WorldContract::new(world_address, account.as_ref());
 
-        let start_game_system = world.system("start_game_dojo_side", block_id).await.unwrap();
-
-        let player_num_one = get_given_model_id(ctx.clone(), (1 as u8).into()).await.unwrap();
-
-        let player_num_two = get_given_model_id(ctx.clone(), (1 as u8).into()).await.unwrap();
-
+        let check_choice_system = world.system("check_game_dojo_side", block_id).await.unwrap();
+ 
         while let Some(_) = rx.recv().await {
 
-            match start_game_system
+            match check_choice_system
                 .execute(vec![
-                    player_num_one,
+                    into_field_element(10),
                 ])
                 .await
-                //await is asyncrounous
             {
                 Ok(_) => {
-                    ctx.run_on_main_thread(move |ctx| 
+                    ctx.run_on_main_thread(move |_ctx| 
                     {
-                      
-                        let mut state: SystemState<EventWriter<PlayerInitiatedEvent>> = SystemState::new(ctx.world);
-                              
-                        let mut spawn_player= state.get_mut(ctx.world);
-                         
-                        spawn_player.send(PlayerInitiatedEvent); 
+                        println!("call sent fine");
                         
                     })
                     .await;
-                    
                 }
                 Err(e) => {
-                    log::error!("Run spawn_player system: {e}");
-                }
-            }
-
-            match start_game_system
-                .execute(vec![
-                    player_num_two,
-                ])
-                .await
-                //await is asyncrounous
-            {
-                Ok(_) => {
-                    ctx.run_on_main_thread(move |ctx| 
-                    {
-                        let mut state: SystemState<EventWriter<PlayerInitiatedEvent>> = SystemState::new(ctx.world);
-                              
-                        let mut spawn_player= state.get_mut(ctx.world);
-                         
-                        spawn_player.send(PlayerInitiatedEvent); 
-                        
-                    })
-                    .await;
-                    
-                }
-                Err(e) => {
-                    log::error!("Run spawn_player system: {e}");
+                    log::error!("Run check_game_dojo_side system: {e}");
                 }
             }
         }
+
     });
 }
 
@@ -574,70 +791,42 @@ fn start_game_dojo(
 
 
 
-// // this is apparently a startup system so only called once but it has an indefinite loop in the middle, thats where the update happens
-// fn update_vehicle_thread(
-//     env: Res<DojoEnv>,
-//     runtime: ResMut<TokioTasksRuntime>,
-//     mut commands: Commands,
-// ) {
-
-//     let (tx, mut rx) = mpsc::channel::<()>(16);
-
-//     commands.insert_resource(CheckGame(tx));
-
-//     let account = env.account.clone();
-//     let world_address = env.world_address;
-//     let block_id = env.block_id;
-
-//     runtime.spawn_background_task(move |mut ctx| async move {
-
-//         let world = WorldContract::new(world_address, account.as_ref());
-
-//         //get the component/struct Player from the dojo world
-//         let player_component = world.component("Player", block_id).await.unwrap();
-
-//         //this is the loop that runs indefinetly
-//         while let Some(_) = rx.recv().await {
-           
-//             //let model_id = get_model_id(ctx.clone()).await;
-            
-
-          
-//                 match player_component
-//                     .entity(FieldElement::ZERO, vec![model_id], block_id)
-//                     .await
-//                 {   // the return data is then saved in the vehicle variable
-//                     Ok(vehicle) => 
-//                     {
-//                         ctx.run_on_main_thread(move |ctx| 
-//                         {   
-//                             let mut state: SystemState<EventWriter<UpdateCar>> = SystemState::new(ctx.world);
-
-//                             let mut update_car = state.get_mut(ctx.world);
-              
-//                             update_car.send(UpdateCar { vehicle })  
-
-//                         })
-//                         .await;
-//                     }
-
-//                     Err(e) => {
-//                         log::error!("Query `Vehicle` component: {e}");
-//                     }
-//                 }
-            
-//         }
-//     });
-// }
 
 
 
 
 
-async fn get_given_model_id(mut ctx: TaskContext, given_id: FieldElement) -> Option<FieldElement> {
-    ctx.run_on_main_thread(move |_ctx| {
-        
-        Some(given_id)
-    })
-    .await
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+pub fn field_element_to_f32(val: FieldElement) -> f32 {
+    val.to_string().parse().unwrap()
 }
+
+
+pub fn field_element_to_u32(val: FieldElement) -> u32 {
+    field_element_to_f32(val) as u32
+}
+
+
+
+pub fn into_field_element(val: u8) -> FieldElement {
+    FieldElement::from(val)
+}
+
