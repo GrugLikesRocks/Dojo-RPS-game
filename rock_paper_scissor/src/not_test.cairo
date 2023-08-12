@@ -163,7 +163,7 @@ mod check_game_dojo_side{
 
 
 
-
+// this is to change
 
 #[system]
 mod update_player_choice{
@@ -172,32 +172,33 @@ mod update_player_choice{
     use serde::Serde;
     use dojo::world::Context;
     use super::{Player}; //gettign the types from above
+    use super:: {ONE, TWO};
                                                     // is there a way to send a type? like a enum or something?
-    fn execute(ctx: Context, player_index_one : felt252, choice_index_one : felt252, player_index_two : felt252, choice_index_two : felt252 )
+    fn execute(ctx: Context, choice_index_one : felt252,  choice_index_two : felt252 )
     {
         
         // assert(player_index_one == 1, 'should be 1'); 
         // assert(player_index_two == 2, 'should be 2'); 
 
         if choice_index_one == 1 {
-            set !(ctx.world, player_index_one.into(), (Player { index: player_index_one.into(), choice: 1 }));
+            set !(ctx.world, ONE.into(), (Player { index: ONE.into(), choice: 1 }));
         }
         else if choice_index_one == 2 {
-            set !(ctx.world, player_index_one.into(), (Player { index: player_index_one.into(), choice: 2 }));
+            set !(ctx.world, ONE.into(), (Player { index: ONE.into(), choice: 2 }));
         }
         else if choice_index_one == 3 {
-            set !(ctx.world, player_index_one.into(), (Player { index: player_index_one.into(), choice: 3 }));
+            set !(ctx.world, ONE.into(), (Player { index: ONE.into(), choice: 3 }));
         }
 
 
         if choice_index_two == 1 {
-            set !(ctx.world, player_index_two.into(), (Player { index: player_index_two.into(), choice: 1 }));
+            set !(ctx.world, TWO.into(), (Player { index: TWO.into(), choice: 1 }));
         }
         else if choice_index_two == 2 {
-            set !(ctx.world, player_index_two.into(), (Player { index: player_index_two.into(), choice: 2 }));
+            set !(ctx.world, TWO.into(), (Player { index: TWO.into(), choice: 2 }));
         }
         else if choice_index_two == 3 {
-            set !(ctx.world, player_index_two.into(), (Player { index: player_index_two.into(), choice: 3 }));
+            set !(ctx.world, TWO.into(), (Player { index: TWO.into(), choice: 3 }));
         }
 
     }

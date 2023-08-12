@@ -7,10 +7,10 @@ use bevy::window::PrimaryWindow;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Choice {
-    Rock,
-    Paper,
-    Scissors,
-    None,
+    Rock  =3,
+    Paper =2,
+    Scissors=1,
+    None=0,
 }
 #[derive(Component)]
 pub struct Game {
@@ -19,7 +19,7 @@ pub struct Game {
     pub current_game_state: u8,
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Rect {
     choice: Choice,
     text: String,
@@ -49,7 +49,7 @@ impl Rect {
     }
 }
 
-#[derive(Component)]
+#[derive(Component,Clone)]
 pub struct Player {
     pub choice: Choice,
     pub rects: Vec<Rect>,
@@ -355,6 +355,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use url::Url;
+use tokio::sync::mpsc::Receiver;
+
 
 
 
@@ -387,6 +389,7 @@ impl DojoSyncTime {
 
 
 fn sync_dojo_state(
+    mut players_query: Query<(&Player,)>,
     mut dojo_sync_time: Query<&mut DojoSyncTime>,
     mut game: Query<&mut Game>,
     time: Res<Time>,
@@ -420,17 +423,30 @@ fn sync_dojo_state(
 
 
 
-            if let Err(e) = update_choice.try_send() {
-                log::error!("updating the choice: {e}");
+               // Fetch player choices here since sync_dojo_state is called every frame
+               let mut player1_choice: i32 = 0; // default values
+               let mut player2_choice: i32 = 0;
+   
+               for player in players_query.iter() {
+                   match player.0.player_num {
+                       1 => player1_choice = player.0.choice as i32,
+                       2 => player2_choice = player.0.choice as i32,
+                       _ => {}
+                   }
+               }
+   
+
+
+            if let Err(e) = update_choice.try_send(player1_choice, player2_choice) {
+                log::error!("updating the choice: {:?}", e);
             }
-
-
+            // if let Err(e) = update_choice.try_send() {
+            //     log::error!("updating the choice: {e}");
+            // }
 
             if let Err(e) = change_game_state.try_send() {   // thsi one also works fine
                 log::error!("updating the game state: {e}");
             }
-
-
         }   
     } else {
         dojo_time.timer.tick(time.delta()); 
@@ -550,21 +566,45 @@ fn start_game_dojo(
 
 
 
-#[derive(Resource)]
-pub struct UpdateChoices(mpsc::Sender<()>);
+// #[derive(Resource)]
+// pub struct UpdateChoices(mpsc::Sender<()>);
 
-impl UpdateChoices {
-    pub fn try_send(&self)
-        // Result<T, E>: The Result type in Rust represents either a successful value of type T or an error of type E.
-        // this is not a touple
-     -> Result< (), mpsc::error::TrySendError<()> > {
-        // i think its like if it does fail it saves the error in e
+// impl UpdateChoices {
+//     pub fn try_send(&self)
+//         // Result<T, E>: The Result type in Rust represents either a successful value of type T or an error of type E.
+//         // this is not a touple
+//      -> Result< (), mpsc::error::TrySendError<()> > {
+//         // i think its like if it does fail it saves the error in e
 
-        self.0.try_send(())
-    }
+//         self.0.try_send(())
+//     }
+// }
+
+
+
+
+
+
+
+#[derive(Debug, Clone)]
+pub struct PlayerChoiceData {
+   pub player1_choice: i32,
+   pub player2_choice: i32,
 }
 
+// Updated UpdateChoices to send PlayerChoiceData
+#[derive(Resource)]
+pub struct UpdateChoices(mpsc::Sender<PlayerChoiceData>);
 
+impl UpdateChoices {
+    pub fn try_send(&self, player1_choice: i32, player2_choice: i32)
+     -> Result<(), mpsc::error::TrySendError<PlayerChoiceData>> {
+        self.0.try_send(PlayerChoiceData {
+            player1_choice,
+            player2_choice,
+        })
+    }
+}
 
 
 
@@ -573,48 +613,97 @@ fn update_choices_thread(
     env: Res<DojoEnv>,
     runtime: ResMut<TokioTasksRuntime>,
     mut commands: Commands,
-
 ) {
-    let (tx, mut rx) = mpsc::channel::<()>(8);
-
+    let (tx, mut rx) = mpsc::channel::<PlayerChoiceData>(8);
+    
     commands.insert_resource(UpdateChoices(tx));
-  
+
     let account = env.account.clone();
     let world_address = env.world_address;
     let block_id = env.block_id;
 
     runtime.spawn_background_task(move |mut ctx| async move {
-
         let world = WorldContract::new(world_address, account.as_ref());
-
         let update_choice_system = world.system("update_player_choice", block_id).await.unwrap();
 
-        while let Some(_) = rx.recv().await {
-
+        while let Some(data) = rx.recv().await {
             match update_choice_system
                 .execute(vec![
-                    into_field_element(1), 
-                    into_field_element(2),
-                    into_field_element(2),
-                    into_field_element(2),
+                    into_field_element(data.player1_choice as u8),
+                    into_field_element(data.player2_choice as u8),
                 ])
                 .await
             {
                 Ok(_) => {
-                    ctx.run_on_main_thread(move |_ctx| 
-                    {
+                    ctx.run_on_main_thread(move |_ctx| {
                         println!("call sent fine");
                     })
                     .await;
                 }
                 Err(e) => {
-                    log::error!("Run update choice system: {e}");
+                    log::error!("Run update choice system: {:?}", e);
                 }
             }
         }
-
     });
 }
+
+
+// pub struct UpdatePlayerChoiceEvent {
+//     pub player_num: u8,
+//     pub choice: Choice,
+//     // ... any other data you need
+// }
+
+// fn update_choices_thread(
+//     env: Res<DojoEnv>,
+//     runtime: ResMut<TokioTasksRuntime>,
+//     mut commands: Commands,
+// ) {
+//     // Changed the type of the channel to handle UpdatePlayerChoiceEvent
+//     let (tx, mut rx) = mpsc::channel::<>(8);
+    
+//     commands.insert_resource(UpdateChoices(tx));
+
+//     let account = env.account.clone();
+//     let world_address = env.world_address;
+//     let block_id = env.block_id;
+
+//     runtime.spawn_background_task(move |mut ctx| async move {
+
+//         let world = WorldContract::new(world_address, account.as_ref());
+
+//         let update_choice_system = world.system("update_player_choice", block_id).await.unwrap();
+
+//         // Changed the loop to handle UpdatePlayerChoiceEvent received from the channel
+//         while let Some(event) = rx.recv().await {
+
+//             match update_choice_system
+//                 .execute(vec![
+//                     into_field_element(event.player_num), 
+//                     into_field_element(event.choice as u8), 
+//                     // ... other data if needed
+//                 ])
+//                 .await
+//             {
+//                 Ok(_) => {
+//                     ctx.run_on_main_thread(move |_ctx| 
+//                     {
+//                         println!("call sent fine");
+//                     })
+//                     .await;
+//                 }
+//                 Err(e) => {
+//                     log::error!("Run update choice system: {e}");
+//                 }
+//             }
+//         }
+
+//     });
+// }
+
+
+
 
 
 
@@ -746,7 +835,7 @@ fn set_winner_state_thread(
     env: Res<DojoEnv>,
     runtime: ResMut<TokioTasksRuntime>,
     mut commands: Commands,
-
+    
 ) {
     let (tx, mut rx) = mpsc::channel::<()>(8);
 
@@ -761,7 +850,8 @@ fn set_winner_state_thread(
         let world = WorldContract::new(world_address, account.as_ref());
 
         let check_choice_system = world.system("check_game_dojo_side", block_id).await.unwrap();
- 
+        
+
         while let Some(_) = rx.recv().await {
 
             match check_choice_system
