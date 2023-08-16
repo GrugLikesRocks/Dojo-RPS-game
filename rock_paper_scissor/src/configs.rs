@@ -1,4 +1,7 @@
 
+// CONSTANTS NEEDED AROUND THE PROJECT
+
+
 pub mod configuration_values
 {
     ///////// DOJO ///////////

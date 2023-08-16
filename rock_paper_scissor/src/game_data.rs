@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+// components and enums structs used all over the project usually each type should have its own script but because there are not many this is how we are doing it here
 
 pub enum Outcome {
     Player1Wins = 1,
@@ -8,6 +9,8 @@ pub enum Outcome {
     None = 4,
 }
 
+// impl is an extention to a type
+// in this case when we have an u32 we can call .into() on it and it will return an Outcome enum
 impl From<u32> for Outcome {
     fn from(item: u32) -> Self {
         match item {
@@ -15,12 +18,10 @@ impl From<u32> for Outcome {
             2 => Outcome::Player2Wins,
             3 => Outcome::Tie,
             4 => Outcome::None,
-            _ => panic!("Invalid value for Outcome enum!"), // or you might return a default value or Error
+            _ => panic!("Invalid value for Outcome enum!"),
         }
     }
 }
-
-
 
 
 #[derive(Component)]
@@ -33,7 +34,7 @@ pub struct Game {
 #[derive(Component)]
 pub struct Player {
     pub choice: Choice,
-    pub crypto_address: CryptoAddress, // i would like for this to be type address or something
+    pub crypto_address: CryptoAddress, 
 }
 
 pub struct CryptoAddress {
@@ -49,6 +50,7 @@ pub enum Choice {
     None = 4,
 }
 
+// otherway around here we can call .into() on a Choice enum and it will return an u8
 impl Into<u8> for Choice {
     fn into(self) -> u8 {
         self as u8
@@ -74,5 +76,7 @@ pub struct TextPlayerData {
     pub player: Entity,
 }
 
+// some components are completly empty and are used only to identify entities
+// so in this case when we qeury the world for entities with this component we know that we are looking for a text that displays the game outcome
 #[derive(Component)]
-pub struct TextGameOutcome;
+pub struct UIGameOutcome;

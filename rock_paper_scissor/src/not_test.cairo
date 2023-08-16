@@ -11,17 +11,13 @@ use orion::numbers::fixed_point::implementations::impl_16x16::FP16x16Impl;
 use orion::operators::tensor::implementations::impl_tensor_fp::Tensor_fp;
 
 
-const ONE: felt252 = 1;
-const TWO: felt252 = 2;
-
-
 #[derive(Component, Serde, Drop, Copy)]
 struct Player {
     player_ca: felt252, //address of the driver contract
     choice: felt252, // this should be an enum but whatever
 }
 
-//seerde is something to do with the indexer but i dont know what it does
+//seerde is something to do with the indexer 
 impl PlayerSerdeLen of dojo::SerdeLen<Player> {
     #[inline(always)]
     fn len() -> usize {
@@ -38,25 +34,28 @@ impl PlayerSerdeLen of dojo::SerdeLen<Player> {
 #[derive(Component, Serde, Drop, Copy)]
 struct Game {
     winner: u8,
-    game_ca: felt252, //address of the driver contract
+    game_ca: felt252, //address of the game contract
     player_one_address: felt252,
     player_two_address: felt252,
 }
 
-impl GameSerdeLen of dojo::SerdeLen<Game> {
+impl GameSerdeLen of dojo::SerdeLen<Game> {  // this is necessary for serde to work
     #[inline(always)]
     fn len() -> usize {
         8
     }
 }
 
-
 // 1 player one wins
 // 2 player two wins
 // 3 tie
 // 4 nothing yet
 
+
 // this starts the game by taking the address and where to store everything
+
+// set ! and get ! is basically like a dictionary, give the key and say what type it should return or wrtie very simple, in this case we are using the addresses of the players as the keys
+
 
 #[system]
 mod start_game_dojo_side {
@@ -170,31 +169,11 @@ mod update_player_choice {
     use serde::Serde;
     use dojo::world::Context;
     use super::{Player}; //gettign the types from above
-    use super::{ONE, TWO};
-    // is there a way to send a type? like a enum or something?
+
     fn execute(ctx: Context, player_address: felt252, choice: felt252) {
         set !(
             ctx.world, player_address.into(), (Player { player_ca: player_address, choice: choice })
         );
-    // if choice_index_one == 1 {
-    //     set !(ctx.world, ONE.into(), (Player { index: ONE.into(), choice: 1 }));
-    // }
-    // else if choice_index_one == 2 {
-    //     set !(ctx.world, ONE.into(), (Player { index: ONE.into(), choice: 2 }));
-    // }
-    // else if choice_index_one == 3 {
-    //     set !(ctx.world, ONE.into(), (Player { index: ONE.into(), choice: 3 }));
-    // }
-
-    // if choice_index_two == 1 {
-    //     set !(ctx.world, TWO.into(), (Player { index: TWO.into(), choice: 1 }));
-    // }
-    // else if choice_index_two == 2 {
-    //     set !(ctx.world, TWO.into(), (Player { index: TWO.into(), choice: 2 }));
-    // }
-    // else if choice_index_two == 3 {
-    //     set !(ctx.world, TWO.into(), (Player { index: TWO.into(), choice: 3 }));
-    // }
     }
 }
 
